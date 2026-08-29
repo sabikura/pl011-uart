@@ -4,79 +4,51 @@
 #![feature(cfg_target_abi)]
 #![feature(strict_provenance)]
 
-pub mod registers;
+mod driver;
+pub(crate) mod registers;
 
-#[cfg(target_abi = "purecap")]
-use core::num::NonZeroUsize;
-use core::{
-    ptr::NonNull,
-    sync::atomic::{AtomicBool, Ordering},
-};
-use registers::{Pl011Registers, DR, FR};
-use tock_registers::interfaces::{Readable, Writeable};
+use core::{cell::RefCell, fmt};
 
-#[cfg(target_abi = "purecap")]
-use cheri::{
-    prelude::*,
-    ptr::{default_data_mut, Perms},
-};
+use critical_section::Mutex;
+pub use driver::Pl011Uart;
 
-static TAKEN: AtomicBool = AtomicBool::new(false);
+/// Global writer backing the [`print!`] and [`println!`] macros
+struct Writer(Mutex<RefCell<Option<Pl011Uart>>>);
+static WRITER: Writer = Writer(Mutex::new(RefCell::new(None)));
 
-/// PL011 UART driver
-pub struct Pl011Uart {
-    registers: NonNull<Pl011Registers>,
+/// Configure a [`Pl011Uart`] as the global writer used by [`print!`] and [`println!`].
+///
+/// Returns the previously owned instance, if any. Until this is called, the
+/// prints silently discard their input.
+pub fn set_writer(uart: Pl011Uart) -> Option<Pl011Uart> {
+    critical_section::with(|cs| WRITER.0.borrow_ref_mut(cs).replace(uart))
 }
 
-// SAFETY:
-unsafe impl Send for Pl011Uart {}
-
-impl Pl011Uart {
-    /// Create a new [`Pl011Uart`] instance.
-    ///
-    /// # Safety
-    ///
-    /// The caller must guarantee that the base address points to a valid MMIO PL011 region
-    pub unsafe fn new(base: NonNull<u32>) -> Option<Self> {
-        let is_taken = TAKEN.swap(true, Ordering::AcqRel);
-        (!is_taken).then(|| Self {
-            registers: base.cast(),
-        })
-    }
-
-    /// Create a new [`Pl011Uart`] instance from an address, deriving the DDC
-    ///
-    /// # Safety
-    ///
-    /// The caller must guarantee that the base address points to a valid MMIO PL011 region
-    #[cfg(target_abi = "purecap")]
-    pub unsafe fn from_address(addr: usize) -> Option<Self> {
-        let ddc: *mut u32 = cheri::ptr::default_data_mut();
-        let ptr = ddc
-            .with_addr(addr)
-            .with_perms_clear_except(Perms::LOAD | Perms::STORE)
-            .with_bounds(4);
-
-        // SAFETY: Safety contract should be guaranteed by the caller
-        unsafe { Self::new(NonNull::new_unchecked(ptr)) }
-    }
-
-    /// Writes a byte
-    pub fn write_byte(&mut self, byte: u8) {
-        let regs = self.regs();
-        regs.dr.write(DR::DATA.val(byte as u32));
-    }
-
-    /// Write a slice of data, without checking if the FIFO is full
-    pub fn write_bytes(&mut self, data: &[u8]) {
-        for byte in data {
-            self.write_byte(*byte);
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    critical_section::with(|cs| {
+        if let Some(uart) = WRITER.0.borrow_ref_mut(cs).as_mut() {
+            // Writing to the UART is infallible, see `Pl011Uart::write_str`
+            let _ = fmt::Write::write_fmt(uart, args);
         }
-    }
+    });
+}
 
-    fn regs(&self) -> &Pl011Registers {
-        // SAFETY: The constructor's caller should have guaranteed that the pointer to the PL011
-        // registers is valid
-        unsafe { self.registers.as_ref() }
-    }
+/// Print to the global UART writer installed with [`init`]
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::_print(::core::format_args!($($arg)*))
+    };
+}
+
+/// Print to the global UART writer installed with [`init`], with a trailing newline
+#[macro_export]
+macro_rules! println {
+    () => {
+        $crate::print!("\n")
+    };
+    ($($arg:tt)*) => {
+        $crate::_print(::core::format_args!("{}\n", ::core::format_args!($($arg)*)))
+    };
 }
