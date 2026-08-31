@@ -5,6 +5,5 @@ edition = "2021"
 rust-version = "1.72.1"
 
 [dependencies]
-cheri = { git = "https://github.com/sabikura/cheri-rs.git" }
 critical-section = "1.2.0"
 tock-registers = "0.10.1"

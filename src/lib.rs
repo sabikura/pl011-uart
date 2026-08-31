@@ -1,11 +1,9 @@
 //! Small ARM PL011 (PrimeCell) UART driver
 
 #![no_std]
-#![feature(cfg_target_abi)]
-#![feature(strict_provenance)]
 
 mod driver;
-pub(crate) mod registers;
+pub mod registers;
 
 use core::{cell::RefCell, fmt};
 

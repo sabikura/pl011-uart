@@ -6,9 +6,6 @@ use core::{
 };
 use tock_registers::interfaces::Writeable;
 
-#[cfg(target_abi = "purecap")]
-use cheri::{prelude::*, ptr::Perms};
-
 /// Whether the [`Pl011Uart`] struct was already created
 static TAKEN: AtomicBool = AtomicBool::new(false);
 
@@ -26,29 +23,10 @@ impl Pl011Uart {
     ///
     /// # Safety
     ///
-    /// The caller must guarantee that the base address points to a valid MMIO PL011 region
-    pub unsafe fn new(base: NonNull<u32>) -> Option<Self> {
+    /// The caller must guarantee that the pointer points to a valid MMIO PL011 register block
+    pub unsafe fn new(registers: NonNull<Pl011Registers>) -> Option<Self> {
         let is_taken = TAKEN.swap(true, Ordering::AcqRel);
-        (!is_taken).then(|| Self {
-            registers: base.cast(),
-        })
-    }
-
-    /// Create a new [`Pl011Uart`] instance from an address, deriving the DDC
-    ///
-    /// # Safety
-    ///
-    /// The caller must guarantee that the base address points to a valid MMIO PL011 region
-    #[cfg(target_abi = "purecap")]
-    pub unsafe fn from_address(addr: usize) -> Option<Self> {
-        let ddc: *mut u32 = cheri::ptr::default_data_mut();
-        let ptr = ddc
-            .with_addr(addr)
-            .with_perms_clear_except(Perms::LOAD | Perms::STORE)
-            .with_bounds(4);
-
-        // SAFETY: Safety contract should be guaranteed by the caller
-        unsafe { Self::new(NonNull::new_unchecked(ptr)) }
+        (!is_taken).then(|| Self { registers })
     }
 
     /// Writes a byte
