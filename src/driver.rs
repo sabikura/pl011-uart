@@ -1,10 +1,10 @@
-use crate::registers::{Pl011Registers, DR};
+use crate::registers::{Pl011Registers, DR, FR};
 use core::{
     fmt,
     ptr::NonNull,
     sync::atomic::{AtomicBool, Ordering},
 };
-use tock_registers::interfaces::Writeable;
+use tock_registers::interfaces::{Readable, Writeable};
 
 /// Whether the [`Pl011Uart`] struct was already created
 static TAKEN: AtomicBool = AtomicBool::new(false);
@@ -39,6 +39,24 @@ impl Pl011Uart {
     pub fn write_bytes(&mut self, data: &[u8]) {
         for byte in data {
             self.write_byte(*byte);
+        }
+    }
+
+    /// Read a byte, `None` if the receive FIFO is empty
+    pub fn read_byte(&mut self) -> Option<u8> {
+        let regs = self.regs();
+        if regs.fr.is_set(FR::RXFE) {
+            return None;
+        }
+        Some(regs.dr.read(DR::DATA) as u8)
+    }
+
+    /// Read a byte, spinning until one is received
+    pub fn read_byte_blocking(&mut self) -> u8 {
+        loop {
+            if let Some(byte) = self.read_byte() {
+                return byte;
+            }
         }
     }
 
